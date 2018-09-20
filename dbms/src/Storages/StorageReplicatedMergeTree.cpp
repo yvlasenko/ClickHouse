@@ -4408,7 +4408,7 @@ void StorageReplicatedMergeTree::removePartsFromZooKeeper(zkutil::ZooKeeperPtr &
             if (code == Coordination::ZNONODE)
             {
                 /// Fallback
-                LOG_DEBUG(log, "There are no some part nodes in ZooKeeper, will remove part nodes sequentially");
+                LOG_DEBUG(log, "Some parts in the batch have no corresponding nodes in ZooKeeper, will remove part nodes one by one");
 
                 for (auto it_in_batch = it_first_node_in_batch; it_in_batch != it_next; ++it_in_batch)
                 {
