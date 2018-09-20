@@ -36,6 +36,7 @@
 #include <Common/escapeForFileName.h>
 #include <Common/StringUtils/StringUtils.h>
 #include <Common/typeid_cast.h>
+#include <Common/hex.h>
 
 #include <Poco/DirectoryIterator.h>
 
@@ -851,8 +852,21 @@ void StorageReplicatedMergeTree::checkPartChecksumsAndAddCommitOps(const zkutil:
             continue;
         }
 
+        auto print = [](const MinimalisticDataPartChecksums & c)
+        {
+            return "num_compressed_files: " + toString(c.num_compressed_files)
+            + " num_uncompressed_files: " + toString(c.num_uncompressed_files)
+            + " hash_of_all_files: " + getHexUIntUppercase(c.hash_of_all_files.first) + getHexUIntUppercase(c.hash_of_all_files.second)
+            + " hash_of_uncompressed_files: " + getHexUIntUppercase(c.hash_of_uncompressed_files.first) + getHexUIntUppercase(c.hash_of_uncompressed_files.second)
+            + " uncompressed_hash_of_compressed_files: " + getHexUIntUppercase(c.uncompressed_hash_of_compressed_files.first) + getHexUIntUppercase(c.uncompressed_hash_of_compressed_files.second);
+        };
+
         auto zk_checksums = MinimalisticDataPartChecksums::deserializeFrom(checksums_str);
-        zk_checksums.checkEqual(part->checksums, true);
+        MinimalisticDataPartChecksums part_checksums;
+        part_checksums.computeTotalChecksums(part->checksums);
+        LOG_TRACE(log, "CHECK " << print(part_checksums) << " to replica " << replica << ": " << print(zk_checksums));
+        zk_checksums.checkEqual(part->checksums, // true
+                                false);
 
         if (replica == replica_name)
             has_been_alredy_added = true;
