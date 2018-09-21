@@ -177,11 +177,13 @@ public:
     class Transaction : private boost::noncopyable
     {
     public:
-        Transaction() {}
+        Transaction(MergeTreeData & data_) : data(&data_) {}
 
         DataPartsVector commit(MergeTreeData::DataPartsLock * acquired_parts_lock = nullptr);
 
         void rollback();
+
+        void rollbackAndTryDelete();
 
         size_t size() const { return precommitted_parts.size(); }
         bool isEmpty() const { return precommitted_parts.empty(); }
@@ -204,11 +206,7 @@ public:
         MergeTreeData * data = nullptr;
         DataParts precommitted_parts;
 
-        void clear()
-        {
-            data = nullptr;
-            precommitted_parts.clear();
-        }
+        void clear() { precommitted_parts.clear(); }
     };
 
     /// An object that stores the names of temporary files created in the part directory during ALTER of its
@@ -441,6 +439,8 @@ public:
     /// Returns old inactive parts that can be deleted. At the same time removes them from the list of parts
     /// but not from the disk.
     DataPartsVector grabOldParts();
+
+    DataPartsVector tryGrabPartsForDeletion(DataPartsVector && parts);
 
     /// Reverts the changes made by grabOldParts(), parts should be in Deleting state.
     void rollbackDeletingParts(const DataPartsVector & parts);

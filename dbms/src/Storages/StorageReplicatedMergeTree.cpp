@@ -1169,7 +1169,7 @@ bool StorageReplicatedMergeTree::tryExecuteMerge(const LogEntry & entry)
                         + entry.new_part_name + "`", ErrorCodes::BAD_DATA_PART_NAME);
     }
 
-    MergeTreeData::Transaction transaction;
+    MergeTreeData::Transaction transaction(data);
     MergeTreeData::MutableDataPartPtr part;
 
     Stopwatch stopwatch;
@@ -1196,8 +1196,6 @@ bool StorageReplicatedMergeTree::tryExecuteMerge(const LogEntry & entry)
         {
             if (MergeTreeDataPartChecksums::isBadChecksumsErrorCode(e.code()))
             {
-                transaction.rollback();
-
                 ProfileEvents::increment(ProfileEvents::DataAfterMergeDiffersFromReplica);
 
                 LOG_ERROR(log, getCurrentExceptionMessage(false) << ". "
@@ -1214,6 +1212,9 @@ bool StorageReplicatedMergeTree::tryExecuteMerge(const LogEntry & entry)
                     "We will download merged part from replica to force byte-identical result.");
 
                 write_part_log(ExecutionStatus::fromCurrentException());
+
+                part.reset();
+                transaction.rollbackAndTryDelete();
 
                 return false;
             }
@@ -1287,7 +1288,7 @@ bool StorageReplicatedMergeTree::tryExecutePartMutation(const StorageReplicatedM
     auto table_lock = lockStructure(false, __PRETTY_FUNCTION__);
 
     MergeTreeData::MutableDataPartPtr new_part;
-    MergeTreeData::Transaction transaction;
+    MergeTreeData::Transaction transaction(data);
 
     MergeTreeDataMergerMutator::FuturePart future_mutated_part;
     future_mutated_part.parts.push_back(source_part);
@@ -1316,7 +1317,7 @@ bool StorageReplicatedMergeTree::tryExecutePartMutation(const StorageReplicatedM
         {
             if (MergeTreeDataPartChecksums::isBadChecksumsErrorCode(e.code()))
             {
-                transaction.rollback();
+                transaction.rollbackAndTryDelete();
 
                 ProfileEvents::increment(ProfileEvents::DataAfterMutationDiffersFromReplica);
 
@@ -1921,7 +1922,7 @@ bool StorageReplicatedMergeTree::executeReplaceRange(const LogEntry & entry)
     {
         /// Commit parts
         auto zookeeper = getZooKeeper();
-        MergeTreeData::Transaction transaction;
+        MergeTreeData::Transaction transaction(data);
 
         Coordination::Requests ops;
         for (PartDescriptionPtr & part_desc : final_parts)
@@ -2831,7 +2832,7 @@ bool StorageReplicatedMergeTree::fetchPart(const String & part_name, const Strin
 
         if (!to_detached)
         {
-            MergeTreeData::Transaction transaction;
+            MergeTreeData::Transaction transaction(data);
             data.renameTempPartAndReplace(part, nullptr, &transaction);
 
             /** NOTE
@@ -4636,7 +4637,7 @@ void StorageReplicatedMergeTree::replacePartitionFrom(const StoragePtr & source_
 
         ops.emplace_back(zkutil::makeCreateRequest(zookeeper_path + "/log/log-", entry.toString(), zkutil::CreateMode::PersistentSequential));
 
-        MergeTreeData::Transaction transaction;
+        MergeTreeData::Transaction transaction(data);
         {
             auto data_parts_lock = data.lockParts();
 

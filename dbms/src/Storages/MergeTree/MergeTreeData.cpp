@@ -706,6 +706,36 @@ MergeTreeData::DataPartsVector MergeTreeData::grabOldParts()
 }
 
 
+MergeTreeData::DataPartsVector MergeTreeData::tryGrabPartsForDeletion(DataPartsVector && parts)
+{
+    std::lock_guard<std::mutex> lock_parts(data_parts_mutex);
+
+    std::vector<DataPartIteratorByInfo> parts_to_change_state;
+    DataPartsVector parts_to_delete;
+
+    for (auto & passed_part : parts)
+    {
+        auto it = data_parts_by_info.find(passed_part->info);
+        if (it == data_parts_by_info.end() || (*it).get() != passed_part.get())
+            throw Exception("Part " + passed_part->name + " doesn't exist", ErrorCodes::LOGICAL_ERROR);
+
+        passed_part.reset();
+        LOG_TRACE(log, "AAAAAAAAA " << (*it)->name << " " << it->use_count());
+
+        if (it->unique())
+            parts_to_change_state.push_back(it);
+    }
+
+    for (auto it : parts_to_change_state)
+    {
+        modifyPartState(it, DataPartState::Deleting);
+        parts_to_delete.emplace_back(*it);
+    }
+
+    return parts_to_delete;
+}
+
+
 void MergeTreeData::rollbackDeletingParts(const MergeTreeData::DataPartsVector & parts)
 {
     std::lock_guard<std::mutex> lock(data_parts_mutex);
@@ -1501,7 +1531,6 @@ void MergeTreeData::renameTempPartAndReplace(
 
     if (out_transaction)
     {
-        out_transaction->data = this;
         out_transaction->precommitted_parts.insert(part);
     }
     else
@@ -2249,9 +2278,37 @@ void MergeTreeData::Transaction::rollback()
         data->removePartsFromWorkingSet(
             DataPartsVector(precommitted_parts.begin(), precommitted_parts.end()),
             /* clear_without_timeout = */ true);
-    }
 
-    clear();
+        clear();
+    }
+}
+
+void MergeTreeData::Transaction::rollbackAndTryDelete()
+{
+    if (!isEmpty())
+    {
+        std::stringstream ss;
+        ss << " Removing parts immediately:";
+        for (const auto & part : precommitted_parts)
+            ss << " " << part->relative_path;
+        ss << ".";
+        LOG_DEBUG(data->log, "Undoing transaction." << ss.str());
+
+        DataPartsVector precommitted_parts_vec(precommitted_parts.begin(), precommitted_parts.end());
+        data->removePartsFromWorkingSet(precommitted_parts_vec, /* clear_without_timeout = */ true);
+
+        clear();
+
+        auto parts_to_remove = data->tryGrabPartsForDeletion(std::move(precommitted_parts_vec));
+
+        for (const DataPartPtr & part : parts_to_remove)
+        {
+            LOG_DEBUG(data->log, "Removing part from filesystem " << part->getNameWithState());
+            part->remove();
+        }
+
+        data->removePartsFinally(parts_to_remove);
+    }
 }
 
 MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData::DataPartsLock * acquired_parts_lock)
